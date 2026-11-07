@@ -1,0 +1,19 @@
+[project]
+name = "TimeTracker"
+version = "0.1.0"
+description = "A simple time tracking application"
+authors = [{ name = "Liam Brown" }]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.124.4",
+    "pydantic>=2.0",
+    "duckdb>=1.0"
+]
+[dependency-groups]
+dev = [
+    "pytest>=7.4"
+]
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
