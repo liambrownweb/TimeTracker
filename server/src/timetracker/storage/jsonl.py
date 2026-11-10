@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from pydantic import JsonValue, ValidationError
 
-from timetracker.domain.entries import EntryRecord, json_equal, storage_month
+from timetracker.domain.entries import EntryRecord, effective_start, json_equal, storage_month
 from timetracker.storage._fs import fsync_directory
 from timetracker.storage.errors import (
     EntryAlreadyExistsError,
@@ -84,7 +84,7 @@ class JsonlEntryStore:
                 and (task is None or record.task == task)
                 and self._attributes_match(record, attributes)
             ]
-            matches.sort(key=lambda record: (record.created_at, str(record.id)))
+            matches.sort(key=lambda record: (effective_start(record), str(record.id)))
             return [record.model_copy(deep=True) for record in matches]
 
     def create(self, record: EntryRecord) -> None:

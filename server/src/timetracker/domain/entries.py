@@ -230,6 +230,15 @@ class EntryRecord(EntryCreate):
         return self
 
 
+def effective_start(entry: EntryRecord) -> datetime:
+    """When the user did the work: current `started_at`, else the commit time.
+
+    Used for chronological ordering and display. Unlike `storage_month`, it
+    follows edits, so a corrected start time moves the entry in the chronology.
+    """
+    return entry.started_at if entry.started_at is not None else entry.created_at
+
+
 def storage_month(entry: EntryRecord) -> tuple[int, int]:
     """UTC (year, month) under which an entry is filed, fixed for its lifetime.
 

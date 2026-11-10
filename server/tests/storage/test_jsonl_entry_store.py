@@ -437,3 +437,12 @@ def test_record_filed_under_the_wrong_start_month_is_corruption(tmp_path: Path) 
 
     with pytest.raises(StorageCorruptionError, match="does not match"):
         JsonlEntryStore(tmp_path)
+
+
+def test_list_orders_by_when_work_happened_not_when_recorded(tmp_path: Path) -> None:
+    store = JsonlEntryStore(tmp_path)
+    store.create(make_record(created_at=DEC, started_at=OCT, task="vacation work"))
+    store.create(make_record(created_at=NOV, task="undated"))
+    store.create(make_record(created_at=DEC, task="undated later"))
+
+    assert [r.task for r in store.list()] == ["vacation work", "undated", "undated later"]
