@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import JsonValue
 
-from timetracker.domain.entries import EntryRecord
+from timetracker.domain.entries import EntryRecord, JournalEvent
 
 
 class EntryStore(Protocol):
@@ -41,3 +41,21 @@ class EntryStore(Protocol):
 
     def update(self, record: EntryRecord) -> None:
         """Replace an existing entry's state; raise EntryNotFoundError if absent."""
+
+
+class JournalStore(Protocol):
+    """Immutable, globally ordered log of committed transaction events."""
+
+    @property
+    def last_sequence(self) -> int:
+        """Sequence of the latest committed event, or 0 for an empty journal."""
+
+    def append(self, event: JournalEvent) -> None:
+        """Durably commit the next event; return only after it is fsynced.
+
+        The event's sequence must be exactly last_sequence + 1 and its event id
+        unused, otherwise InvalidJournalEventError is raised.
+        """
+
+    def read(self, after_sequence: int = 0) -> list[JournalEvent]:
+        """Return committed events with a greater sequence, in order."""

@@ -45,7 +45,7 @@ The journal is the recovery authority; operational records are the read model. V
 
 **Journal integrity** (checked first):
 - Every event carries a checksum over its canonical content, so silent bit rot is detected even when the line still parses as JSON.
-- A torn final line in the newest file (unparseable, incomplete, or failing its checksum) is an unacknowledged write. It is quarantined and truncated, and its sequence number is reused.
+- A torn final line in the newest file is an unacknowledged write. A write is acknowledged only after its line, including the terminating newline, is fsynced, so a final line that lacks its newline is torn however much of it parses. It is copied to `quarantine/`, truncated, and its sequence number is reused. A newline-terminated line that fails parsing or its checksum is never treated as torn; it is corruption and halts startup.
 - Any other fault (a bad non-final line, a sequence gap, a duplicate `event_id` or `sequence`, an event outside its commit month) halts startup. The server reports file, line and reason, and is repaired only by explicit manual action. Events are never skipped.
 - Sequence numbers must be consecutive from 1 across month files.
 
@@ -75,3 +75,13 @@ The time and journal sequence of the last completed deep check are kept in a sma
 - A corrupt or mismatching operational file is moved to `*.corrupt-<time>` and regenerated from the journal. If the damage is not confined to one file, the whole store is rebuilt into a temporary directory, verified, and swapped in.
 
 **Detection:** startup verification, an on-demand `verify` command, and a runtime guard in the coordinator. If a record's `last_event_sequence` is not the expected predecessor, the request returns 503 and the store is flagged for repair.
+
+## Journal storage
+
+`JsonlJournal` (`timetracker.storage`) implements `JournalStore` (`last_sequence`, `append`, `read`).
+
+- **Layout:** `<data_dir>/journal/YYYY/MM.jsonl`, selected by the UTC commit time (`recorded_at`). Appends only; no line is ever rewritten.
+- **Line format:** one event as canonical JSON (sorted keys, compact) plus a `checksum` field, `sha256:` over the canonical JSON of the event without that field. The checksum is computed from the parsed event, so it does not depend on whitespace.
+- **Append:** requires `sequence == last_sequence + 1`, an unused `event_id`, and a commit month no earlier than the latest. It returns only after the line is fsynced (new files and directories are fsynced first). If a write or fsync fails, the partial bytes are truncated away and the event is not acknowledged. If the rollback itself fails, the journal refuses further appends until restart.
+- **Open:** scans the whole journal, enforcing the integrity rules of the recovery policy above. Configurable verification toggles arrive with the configuration loader.
+- **Replay:** `timetracker.domain.replay.replay` rebuilds records from events using the same transitions as live updates. An event that cannot apply cleanly (missing or deleted target, double create, no-op) is a `ReplayError`.

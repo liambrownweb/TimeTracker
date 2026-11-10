@@ -35,3 +35,11 @@ class StorageCorruptionError(StorageError):
         self.path = path
         self.line_number = line_number
         self.reason = reason
+
+
+class InvalidJournalEventError(StorageError):
+    """An event cannot be appended because it would break journal invariants."""
+
+
+class JournalFailedError(StorageError):
+    """A failed append could not be rolled back; the journal refuses further writes."""

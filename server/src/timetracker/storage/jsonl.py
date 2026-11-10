@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from pydantic import JsonValue, ValidationError
 
 from timetracker.domain.entries import EntryRecord, json_equal
+from timetracker.storage._fs import fsync_directory
 from timetracker.storage.errors import (
     EntryAlreadyExistsError,
     EntryNotFoundError,
@@ -25,16 +26,6 @@ _TEMP_GLOB = "[0-9][0-9][0-9][0-9]/.[0-9][0-9].jsonl.*.tmp"
 
 def _month_key(record: EntryRecord) -> _MonthKey:
     return (record.created_at.year, record.created_at.month)
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name != "posix":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 class JsonlEntryStore:
@@ -187,4 +178,4 @@ class JsonlEntryStore:
             temp_path.unlink(missing_ok=True)
             raise
         for directory in (path.parent, self._entries_dir, self._data_dir):
-            _fsync_directory(directory)
+            fsync_directory(directory)
