@@ -230,6 +230,23 @@ class EntryRecord(EntryCreate):
         return self
 
 
+def storage_month(entry: EntryRecord) -> tuple[int, int]:
+    """UTC (year, month) under which an entry is filed, fixed for its lifetime.
+
+    It follows the entry's original `started_at`, so activities are filed by
+    when they happened rather than when the server heard about them. Without a
+    start time it falls back to the month the create was committed
+    (`created_at`). Later edits to `started_at` never move an entry: once the
+    first change is recorded, the original value is read from the initial
+    history snapshot.
+    """
+    original_start = entry.started_at
+    if entry.history and isinstance(entry.history[0], InitialHistory):
+        original_start = entry.history[0].snapshot.started_at
+    anchor = original_start if original_start is not None else entry.created_at
+    return (anchor.year, anchor.month)
+
+
 class EntryUpdate(DomainModel):
     """Domain update input after mapping from the public PATCH contract."""
 

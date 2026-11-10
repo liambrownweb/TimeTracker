@@ -159,7 +159,7 @@ def test_update_and_delete_events_round_trip(tmp_path: Path) -> None:
 
     assert loaded == events
     assert "started_at" in loaded[1].changes.model_fields_set  # type: ignore[union-attr]
-    assert replay(loaded)[entry_id].deleted is True
+    assert replay(loaded).records[entry_id].deleted is True
 
 
 def test_checksum_detects_valid_json_bit_flip(tmp_path: Path) -> None:

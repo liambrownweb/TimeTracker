@@ -78,7 +78,7 @@ Acceptance: model validation tests cover valid manual/stopwatch entries, unknown
 
 ## 02. Operational storage
 
-Operational records are the normal read/reporting source. Organize by resource domain and **original UTC recording month**, e.g. `data/entries/2026/11.jsonl`. Each JSONL line is one complete current entry including its embedded history. An entry stays in its original monthly file after later changes.
+Operational records are the normal read/reporting source. Organize by resource domain and the **UTC month of the entry's original `started_at`** (falling back to the UTC month in which the create was committed when no start time was supplied), e.g. `data/entries/2026/11.jsonl`. Filing by activity time keeps entries recorded after a gap, such as a vacation, in the month when they happened. Each JSONL line is one complete current entry including its embedded history. An entry stays in its original monthly file after later changes.
 
 The operational file is mutable. Update an entry by safely replacing its containing file: construct a complete replacement, write a temporary file in the same filesystem, flush and synchronize it, and atomically rename. Serialize writes with a process-level write lock in v0. Keep filesystem access behind a storage interface, not in API handlers.
 
@@ -190,7 +190,7 @@ Integration acceptance: create, retry, patch, delete, autocomplete, report, rest
 3. Whether optimistic concurrency (`revision`/`If-Match`) is mandatory in v0.
 4. How to identify identical POST retries after an entry has subsequently been edited (retain a canonical original-submission fingerprint or equivalent). (Resolved; see `server/README.md`.)
 5. Whether GET of a logically deleted entry returns 404 or 410, and behavior for repeat DELETE.
-6. Entry time semantics for manual records without known `started_at`, and reporting date filtering rules.
+6. Entry time semantics for manual records without known `started_at`, and reporting date filtering rules. (Partly resolved: storage placement uses the original `started_at`, else the commit month. Reporting date filtering rules remain open.)
 7. Journal commit/recovery strategy for partial writes and a corrupted/non-final line. (Resolved; see the journal recovery policy in `server/README.md`.)
 8. Whether saved reports are included in v0 or deferred.
 

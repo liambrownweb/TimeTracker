@@ -71,7 +71,7 @@ def test_replay_matches_live_application() -> None:
     )
     deleted = delete_event(3)
 
-    replayed = replay([created, update, deleted])[ENTRY_ID]
+    replayed = replay([created, update, deleted]).records[ENTRY_ID]
 
     live = EntryRecord.model_validate(
         {
@@ -102,7 +102,7 @@ def test_replay_applies_explicit_null_started_at() -> None:
     first = update_event(2, {"started_at": T2})
     second = update_event(3, {"started_at": None})
 
-    record = replay([create_event(), first, second])[ENTRY_ID]
+    record = replay([create_event(), first, second]).records[ENTRY_ID]
 
     assert record.started_at is None
     assert record.revision == 3
@@ -111,7 +111,7 @@ def test_replay_applies_explicit_null_started_at() -> None:
 def test_replay_keeps_entries_independent() -> None:
     other = UUID("22222222-2222-4222-8222-222222222222")
 
-    records = replay([create_event(1), create_event(2, other)])
+    records = replay([create_event(1), create_event(2, other)]).records
 
     assert set(records) == {ENTRY_ID, other}
 
@@ -121,14 +121,12 @@ def test_replay_keeps_entries_independent() -> None:
     [
         [update_event(1, {"task": "x"})],
         [create_event(1), create_event(2)],
-        [create_event(1), update_event(2, {"task": "Write"})],
         [create_event(1), delete_event(2), update_event(3, {"task": "x"})],
         [create_event(1), delete_event(2), delete_event(3)],
     ],
     ids=[
         "update-missing",
         "create-twice",
-        "no-op-update",
         "update-after-delete",
         "repeat-delete",
     ],
@@ -147,3 +145,54 @@ def test_apply_journal_event_does_not_mutate_input() -> None:
     apply_journal_event(record, update_event(2, {"task": "Changed"}))
 
     assert record == snapshot
+
+
+def test_provable_no_op_is_skipped_and_reported() -> None:
+    no_op = update_event(
+        2,
+        {
+            "task": "Write",
+            "attributes": AttributeDelta(set={"place": "home"}, remove=["absent"]),
+        },
+    )
+    later = update_event(3, {"duration_seconds": 5})
+
+    result = replay([create_event(1), no_op, later])
+
+    assert result.skipped_no_ops == [no_op.event_id]
+    record = result.records[ENTRY_ID]
+    assert record.duration_seconds == 5
+    assert record.revision == 2
+    assert [item.kind for item in record.history] == ["initial", "update"]
+
+
+@pytest.mark.parametrize(
+    ("before", "after"), [(1, True), (True, 1), (1, 1.0), ({"a": 1}, {"a": True})]
+)
+def test_type_changes_are_never_treated_as_no_ops(
+    before: object, after: object
+) -> None:
+    created = create_event(1)
+    created = created.model_copy(
+        update={
+            "entry": created.entry.model_copy(update={"attributes": {"k": before}})
+        }
+    )
+    change = update_event(2, {"attributes": AttributeDelta(set={"k": after})})
+
+    result = replay([created, change])
+
+    assert result.skipped_no_ops == []
+    assert type(result.records[ENTRY_ID].attributes["k"]) is type(after)
+
+
+def test_real_change_is_never_skipped_even_if_the_live_detector_is_wrong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_detector(record: EntryRecord, *args: object, **kwargs: object) -> EntryRecord:
+        return record
+
+    monkeypatch.setattr("timetracker.domain.replay.apply_entry_update", broken_detector)
+
+    with pytest.raises(ReplayError, match="does not change"):
+        replay([create_event(1), update_event(2, {"task": "A real change"})])

@@ -1,4 +1,4 @@
-"""JSONL operational store organised by original UTC recording month."""
+"""JSONL operational store organised by the entry's original UTC start month."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from pydantic import JsonValue, ValidationError
 
-from timetracker.domain.entries import EntryRecord, json_equal
+from timetracker.domain.entries import EntryRecord, json_equal, storage_month
 from timetracker.storage._fs import fsync_directory
 from timetracker.storage.errors import (
     EntryAlreadyExistsError,
@@ -25,16 +25,16 @@ _TEMP_GLOB = "[0-9][0-9][0-9][0-9]/.[0-9][0-9].jsonl.*.tmp"
 
 
 def _month_key(record: EntryRecord) -> _MonthKey:
-    return (record.created_at.year, record.created_at.month)
+    return storage_month(record)
 
 
 class JsonlEntryStore:
     """Entry store backed by `<data_dir>/entries/YYYY/MM.jsonl`.
 
     Each line is one complete current entry, including embedded history. An
-    entry stays in the file for its original `created_at` month. Every write
-    replaces the whole containing file atomically, so a crash leaves either the
-    old or the new complete file. Writes are serialized by a process-level
+    entry is filed by its original `started_at` month (see `storage_month`)
+    and never moves. Every write replaces the whole containing file
+    atomically, so a crash leaves either the old or the new complete file. Writes are serialized by a process-level
     lock; the store assumes it is the only process using the data directory.
     """
 
@@ -106,8 +106,10 @@ class JsonlEntryStore:
                 raise EntryNotFoundError(record.id)
             current = self._months[key][record.id]
             if record.created_at != current.created_at:
+                raise InvalidEntryUpdateError("created_at is immutable")
+            if _month_key(record) != key:
                 raise InvalidEntryUpdateError(
-                    "created_at is immutable; an entry stays in its original month"
+                    "an entry stays in the month file chosen when it was created"
                 )
             stored = record.model_copy(deep=True)
             records = dict(self._months[key])
@@ -148,7 +150,7 @@ class JsonlEntryStore:
                     raise StorageCorruptionError(
                         path,
                         line_number,
-                        "entry created_at month does not match its file",
+                        "entry storage month does not match its file",
                     )
                 if record.id in records or record.id in seen:
                     raise StorageCorruptionError(

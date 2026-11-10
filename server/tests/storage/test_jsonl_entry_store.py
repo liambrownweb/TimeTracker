@@ -33,13 +33,14 @@ def make_record(
     created_at: datetime = NOV,
     task: str = "Task",
     attributes: dict[str, object] | None = None,
+    started_at: datetime | None = None,
 ) -> EntryRecord:
     return EntryRecord.model_validate(
         {
             "id": entry_id or uuid4(),
             "task": task,
             "duration_seconds": 60,
-            "started_at": None,
+            "started_at": started_at,
             "attributes": attributes or {},
             "created_at": created_at,
             "updated_at": created_at,
@@ -356,3 +357,83 @@ def test_concurrent_creates_and_updates_lose_nothing(tmp_path: Path) -> None:
         stored = reopened.get(record.id)
         assert stored is not None and stored.duration_seconds == 1000 + index
     assert len(read_lines(month_file(tmp_path, 2026, 11))) == 88
+
+
+def test_entry_is_filed_by_started_at_not_by_commit_time(tmp_path: Path) -> None:
+    store = JsonlEntryStore(tmp_path)
+    returned_from_vacation = make_record(created_at=DEC, started_at=OCT)
+
+    store.create(returned_from_vacation)
+
+    assert month_file(tmp_path, 2026, 10).exists()
+    assert not month_file(tmp_path, 2026, 12).exists()
+    assert JsonlEntryStore(tmp_path).get(returned_from_vacation.id) == returned_from_vacation
+
+
+def test_editing_started_at_never_moves_an_entry(tmp_path: Path) -> None:
+    store = JsonlEntryStore(tmp_path)
+    record = make_record(created_at=DEC, started_at=OCT)
+    store.create(record)
+
+    moved = apply_entry_update(
+        record,
+        EntryUpdate(started_at=NOV),
+        event_id=uuid4(),
+        recorded_at=DEC,
+        sequence=2,
+    )
+    store.update(moved)
+    cleared = apply_entry_update(
+        moved,
+        EntryUpdate(started_at=None),
+        event_id=uuid4(),
+        recorded_at=DEC,
+        sequence=3,
+    )
+    store.update(cleared)
+
+    assert len(read_lines(month_file(tmp_path, 2026, 10))) == 1
+    assert not month_file(tmp_path, 2026, 11).exists()
+    assert JsonlEntryStore(tmp_path).get(record.id) == cleared
+
+
+def test_entry_without_started_at_falls_back_to_commit_month(tmp_path: Path) -> None:
+    store = JsonlEntryStore(tmp_path)
+    undated = make_record(created_at=DEC)
+    store.create(undated)
+
+    assert month_file(tmp_path, 2026, 12).exists()
+    gained_start = apply_entry_update(
+        undated,
+        EntryUpdate(started_at=OCT),
+        event_id=uuid4(),
+        recorded_at=DEC,
+        sequence=2,
+    )
+    store.update(gained_start)
+    assert len(read_lines(month_file(tmp_path, 2026, 12))) == 1
+    assert not month_file(tmp_path, 2026, 10).exists()
+
+
+def test_update_that_would_change_placement_is_rejected(tmp_path: Path) -> None:
+    store = JsonlEntryStore(tmp_path)
+    record = make_record(created_at=DEC, started_at=OCT)
+    store.create(record)
+
+    with pytest.raises(InvalidEntryUpdateError):
+        store.update(record.model_copy(update={"history": [], "started_at": NOV}))
+    assert store.get(record.id) == record
+
+
+def test_record_filed_under_the_wrong_start_month_is_corruption(tmp_path: Path) -> None:
+    store = JsonlEntryStore(tmp_path)
+    record = make_record(created_at=DEC, started_at=OCT)
+    store.create(record)
+    october = month_file(tmp_path, 2026, 10)
+    december = month_file(tmp_path, 2026, 12)
+    december.parent.mkdir(parents=True, exist_ok=True)
+    december.write_bytes(october.read_bytes())
+    october.unlink()
+
+    with pytest.raises(StorageCorruptionError, match="does not match"):
+        JsonlEntryStore(tmp_path)
