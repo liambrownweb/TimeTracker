@@ -14,12 +14,27 @@ from pydantic import (
     Field,
     JsonValue,
     PlainSerializer,
+    SerializerFunctionWrapHandler,
+    model_serializer,
     model_validator,
 )
 
 
 OPERATIONAL_SCHEMA_VERSION = 1
 JOURNAL_EVENT_SCHEMA_VERSION = 1
+
+
+def json_equal(left: object, right: object) -> bool:
+    """Compare JSON values without treating `true` as `1` or `1` as `1.0`."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            json_equal(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            json_equal(a, b) for a, b in zip(left, right)
+        )
+    return type(left) is type(right) and left == right
 
 
 def _parse_utc_datetime(value: object) -> datetime:
@@ -110,6 +125,14 @@ class EntryDelta(DomainModel):
         ):
             raise ValueError("task must contain a non-whitespace character")
         return self
+
+    @model_serializer(mode="wrap")
+    def omit_unchanged_fields(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        # Unset means "unchanged"; an explicit started_at of None means "clear it".
+        data: dict[str, object] = handler(self)
+        return {k: v for k, v in data.items() if k in self.model_fields_set}
 
 
 class JournalEventModel(DomainModel):
@@ -273,7 +296,8 @@ def apply_entry_update(
         attributes_to_set = {
             key: value
             for key, value in requested.set.items()
-            if key not in entry.attributes or entry.attributes[key] != value
+            if key not in entry.attributes
+            or not json_equal(entry.attributes[key], value)
         }
         attributes_to_remove = [
             key for key in requested.remove if key in entry.attributes

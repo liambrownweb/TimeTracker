@@ -132,6 +132,26 @@ def test_no_op_update_does_not_change_revision_or_history() -> None:
     assert result.history == []
 
 
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [(1, True), (True, 1), (1, 1.0), ({"a": 1}, {"a": True}), ([1], [1.0])],
+)
+def test_attribute_updates_distinguish_json_types(old: object, new: object) -> None:
+    record = create_record(attributes={"flag": old})
+
+    result = apply_entry_update(
+        record,
+        EntryUpdate(attributes=AttributeDelta(set={"flag": new})),
+        event_id=EVENT_ID,
+        recorded_at=CREATED_AT,
+        sequence=2,
+    )
+
+    assert result is not record
+    assert result.revision == 2
+    assert type(result.attributes["flag"]) is type(new)
+
+
 def test_first_update_snapshots_initial_state_and_records_attribute_delta() -> None:
     record = create_record(attributes={"nullable": "old", "remove-me": 5})
     result = apply_entry_update(
