@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -29,7 +30,7 @@ class EntryStore(Protocol):
         attributes: Mapping[str, JsonValue] | None = None,
         include_deleted: bool = False,
     ) -> list[EntryRecord]:
-        """Return entries ordered by `created_at`, then `id`.
+        """Return entries ordered by `effective_start`, then `id`.
 
         `task` and each attribute value are matched exactly, with JSON types
         distinguished (`1` does not match `true`). Deleted entries are
@@ -41,6 +42,16 @@ class EntryStore(Protocol):
 
     def update(self, record: EntryRecord) -> None:
         """Replace an existing entry's state; raise EntryNotFoundError if absent."""
+
+
+    def restore(self, records: Iterable[EntryRecord]) -> None:
+        """Recovery only: insert or replace complete records rebuilt from the journal."""
+
+    def reset(self, records: Iterable[EntryRecord]) -> Path | None:
+        """Recovery only: quarantine all current data, then store exactly `records`.
+
+        Returns where the old data was moved, or None if there was none.
+        """
 
 
 class JournalStore(Protocol):

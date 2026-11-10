@@ -446,3 +446,38 @@ def test_list_orders_by_when_work_happened_not_when_recorded(tmp_path: Path) -> 
     store.create(make_record(created_at=DEC, task="undated later"))
 
     assert [r.task for r in store.list()] == ["vacation work", "undated", "undated later"]
+
+
+def test_restore_writes_each_month_once_and_moves_misplaced_entries(
+    tmp_path: Path,
+) -> None:
+    store = JsonlEntryStore(tmp_path)
+    keep = make_record(task="keep")
+    replaced = make_record(task="old")
+    store.create(keep)
+    store.create(replaced)
+    fresh = make_record(created_at=DEC, started_at=OCT, task="fresh")
+
+    store.restore([replaced.model_copy(update={"task": "new"}), fresh])
+
+    reopened = JsonlEntryStore(tmp_path)
+    assert reopened.get(replaced.id).task == "new"
+    assert reopened.get(keep.id) == keep
+    assert reopened.get(fresh.id) == fresh
+    assert month_file(tmp_path, 2026, 10).exists()
+
+
+def test_reset_quarantines_old_files_and_stores_exactly_the_given_records(
+    tmp_path: Path,
+) -> None:
+    store = JsonlEntryStore(tmp_path)
+    old = make_record(task="old")
+    store.create(old)
+    new = make_record(task="new")
+
+    quarantined = store.reset([new])
+
+    assert quarantined is not None
+    assert (quarantined / "2026" / "11.jsonl").exists()
+    assert store.get(old.id) is None
+    assert JsonlEntryStore(tmp_path).list() == [new]

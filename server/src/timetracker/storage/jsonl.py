@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -26,6 +27,25 @@ _TEMP_GLOB = "[0-9][0-9][0-9][0-9]/.[0-9][0-9].jsonl.*.tmp"
 
 def _month_key(record: EntryRecord) -> _MonthKey:
     return storage_month(record)
+
+
+def quarantine_entry_files(data_dir: Path | str) -> Path | None:
+    """Move the whole `entries/` tree into `quarantine/`; nothing is deleted.
+
+    Used when the operational files cannot be trusted. Returns the new
+    location, or None if there was nothing to move.
+    """
+    root = Path(data_dir)
+    entries_dir = root / "entries"
+    if not entries_dir.exists():
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination = root / "quarantine" / f"entries-{stamp}-{uuid4().hex[:8]}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.rename(entries_dir, destination)
+    fsync_directory(destination.parent)
+    fsync_directory(root)
+    return destination
 
 
 class JsonlEntryStore:
@@ -116,6 +136,49 @@ class JsonlEntryStore:
             records[stored.id] = stored
             self._write_month_file(key, list(records.values()))
             self._months[key] = records
+
+    def restore(self, records: Iterable[EntryRecord]) -> None:
+        """Insert or replace complete records, rewriting each month file once.
+
+        For recovery only: records come from journal replay, so they are
+        written as given. An entry whose placement differs from where it is
+        currently stored is moved.
+        """
+        with self._lock:
+            incoming = [record.model_copy(deep=True) for record in records]
+            months = dict(self._months)
+            index = dict(self._index)
+            touched: set[_MonthKey] = set()
+            for record in incoming:
+                key = _month_key(record)
+                old_key = index.get(record.id)
+                if old_key is not None:
+                    old_records = dict(months[old_key])
+                    del old_records[record.id]
+                    months[old_key] = old_records
+                    touched.add(old_key)
+                new_records = dict(months.get(key, {}))
+                new_records[record.id] = record
+                months[key] = new_records
+                index[record.id] = key
+                touched.add(key)
+            try:
+                for key in sorted(touched):
+                    self._write_month_file(key, list(months[key].values()))
+            except BaseException:
+                self.rebuild()
+                raise
+            self._months = {key: value for key, value in months.items() if value}
+            self._index = index
+
+    def reset(self, records: Iterable[EntryRecord]) -> Path | None:
+        """Quarantine every existing entry file, then store exactly `records`."""
+        with self._lock:
+            quarantined = quarantine_entry_files(self._data_dir)
+            self._months = {}
+            self._index = {}
+            self.restore(records)
+            return quarantined
 
     @staticmethod
     def _attributes_match(

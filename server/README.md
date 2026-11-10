@@ -72,7 +72,7 @@ The time and journal sequence of the last completed deep check are kept in a sma
 **Repair:**
 - Events missing at an entry's tail are applied in order, idempotently by `event_id` and `sequence`.
 - An event missing from the middle of an entry's history means the entry is rebuilt from all of its journal events and its month file is rewritten. A missed event is never applied on top of later state.
-- A corrupt or mismatching operational file is moved to `*.corrupt-<time>` and regenerated from the journal. If the damage is not confined to one file, the whole store is rebuilt into a temporary directory, verified, and swapped in.
+- Unreadable operational files, or a record with no create event, cause the whole `entries/` tree to be moved to `quarantine/entries-<time>-<id>/` and regenerated from the journal. (Rewriting only the damaged file is a possible later optimization; a full rebuild is correct in every case and is rare.) After any repair a full deep comparison must come back clean, otherwise startup fails.
 
 **Detection:** startup verification, an on-demand `verify` command, and a runtime guard in the coordinator. If a record's `last_event_sequence` is not the expected predecessor, the request returns 503 and the store is flagged for repair.
 
@@ -95,3 +95,16 @@ A retried `POST /v0/entries` for an existing UUID is compared with the entry's o
 - **Identity** is the normalized submission: `id`, `task`, `duration_seconds`, `started_at` and `attributes`, compared with the same type-strict equality used elsewhere (`1`, `1.0` and `true` are different; key order is irrelevant). Server-managed fields (timestamps, revision, history) are not compared.
 - **Deleted entries:** a retry of a since-deleted entry still matches its create event and gets 200.
 - **Lookup:** the coordinator keeps an in-memory index from entry id to its create event, rebuilt from the journal at startup, so a retry never scans the journal. No fingerprint is stored on the operational record.
+
+## Transaction coordinator
+
+`timetracker.service.EntryCoordinator` is the only write path. API handlers will call it; they never touch the stores.
+
+- **Order:** one lock; validate against current state; compute the meaningful delta (`apply_entry_update` as a dry run); append the journal event (fsynced); build the record with `apply_journal_event`, the same function replay uses, so live and replayed state cannot diverge; persist the record. A request that changes nothing writes nothing.
+- **Errors:** `EntryNotFoundError` (404), `EntryDeletedError` (410, for GET and PATCH on a deleted entry), `EntryConflictError` (409), `StoreUnavailableError` (503). Repeated DELETE returns normally (204).
+- **POST retries:** compared with the original create event, as in decision #4, via an in-memory index built at startup.
+- **After a journal commit the mutation is committed.** If saving the record then fails, the coordinator raises `StoreUnavailableError`, flags the store, and repairs it from the journal (cross-check plus targeted repair) before serving the next request. A retried POST then returns the committed entry; a retried PATCH recomputes its delta against the repaired state, so an idempotent set becomes a no-op. Nothing is duplicated. A restart repairs the same way.
+- **Runtime guard:** each entry's `last_event_sequence` must equal the sequence the journal says it should have. A mismatch, or a disagreement about whether an entry exists, returns 503 once, flags the store, and the next request repairs it.
+- **Clock:** commit times never go backwards. If the system clock steps back (including across a month boundary) the event is stamped with the previous event's time, so the journal's month ordering cannot be violated.
+- **Startup:** `open_entry_store` quarantines unreadable operational files and starts empty; `EntryCoordinator` then runs `verify_and_repair` with `VerificationOptions(cross_check, deep_check)`. The journal is always replayed in memory (the coordinator needs it); the options control whether records are compared. The cheap tail check always runs and escalates to the cross-check on a mismatch, including a store that is ahead of the journal. The cross-check and deep comparison classify provable no-op events exactly as `replay` does; they are reported in `skipped_no_ops`, never treated as damage.
+- **Not yet built:** the configuration loader that sets `VerificationOptions`, the deep-check schedule and state file, and the `verify` command.
