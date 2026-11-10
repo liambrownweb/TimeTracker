@@ -188,7 +188,7 @@ Integration acceptance: create, retry, patch, delete, autocomplete, report, rest
 1. Whether operational records remain in monthly JSONL files (the current proposal) or move to individual UUID files now that they are mutable.
 2. Exact PATCH semantics for nested attributes and deletion of attribute keys (e.g. JSON Merge Patch vs JSON Patch vs explicit delta format).
 3. Whether optimistic concurrency (`revision`/`If-Match`) is mandatory in v0.
-4. How to identify identical POST retries after an entry has subsequently been edited (retain a canonical original-submission fingerprint or equivalent).
+4. How to identify identical POST retries after an entry has subsequently been edited (retain a canonical original-submission fingerprint or equivalent). (Resolved; see `server/README.md`.)
 5. Whether GET of a logically deleted entry returns 404 or 410, and behavior for repeat DELETE.
 6. Entry time semantics for manual records without known `started_at`, and reporting date filtering rules.
 7. Journal commit/recovery strategy for partial writes and a corrupted/non-final line. (Resolved; see the journal recovery policy in `server/README.md`.)

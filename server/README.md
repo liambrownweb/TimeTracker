@@ -85,3 +85,13 @@ The time and journal sequence of the last completed deep check are kept in a sma
 - **Append:** requires `sequence == last_sequence + 1`, an unused `event_id`, and a commit month no earlier than the latest. It returns only after the line is fsynced (new files and directories are fsynced first). If a write or fsync fails, the partial bytes are truncated away and the event is not acknowledged. If the rollback itself fails, the journal refuses further appends until restart.
 - **Open:** scans the whole journal, enforcing the integrity rules of the recovery policy above. Configurable verification toggles arrive with the configuration loader.
 - **Replay:** `timetracker.domain.replay.replay` rebuilds records from events using the same transitions as live updates. An event that cannot apply cleanly (missing or deleted target, double create, no-op) is a `ReplayError`.
+
+## Identical POST retries (spec decision #4)
+
+A retried `POST /v0/entries` for an existing UUID is compared with the entry's original create event in the journal, never with the entry's current (possibly edited) state, and a retry never writes anything.
+
+- **Match:** the server answers 200 with the entry's current state. The client treats this as its acknowledgment.
+- **Mismatch:** the server answers 409, since the UUID exists with different content.
+- **Identity** is the normalized submission: `id`, `task`, `duration_seconds`, `started_at` and `attributes`, compared with the same type-strict equality used elsewhere (`1`, `1.0` and `true` are different; key order is irrelevant). Server-managed fields (timestamps, revision, history) are not compared.
+- **Deleted entries:** a retry of a since-deleted entry still matches its create event and gets 200.
+- **Lookup:** the coordinator keeps an in-memory index from entry id to its create event, rebuilt from the journal at startup, so a retry never scans the journal. No fingerprint is stored on the operational record.
