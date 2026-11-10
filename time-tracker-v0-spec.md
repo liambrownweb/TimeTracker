@@ -29,6 +29,20 @@ data/{entries/,journal/,reports/}
 clients/{plasma/,android/}
 ```
 
+### Server configuration
+
+Server settings live in a TOML file parsed with the standard library (`tomllib`). Locations are resolved in this order; the first that applies wins:
+
+| | Config file | Data directory |
+|---|---|---|
+| Explicit | `--config PATH` / `TIMETRACKER_CONFIG` | `data_dir` setting / `TIMETRACKER_DATA_DIR` |
+| Under systemd (`ConfigurationDirectory=` / `StateDirectory=`) | `$CONFIGURATION_DIRECTORY/config.toml` | `$STATE_DIRECTORY` |
+| Otherwise (CLI or ad hoc) | `$XDG_CONFIG_HOME/timetracker/config.toml` (default `~/.config/timetracker/`) | `$XDG_DATA_HOME/timetracker` (default `~/.local/share/timetracker`) |
+
+For a system-level unit with `ConfigurationDirectory=timetracker` and `StateDirectory=timetracker`, systemd supplies `/etc/timetracker/config.toml` and `/var/lib/timetracker` (FHS locations for configuration and persistent variable state; program code is installed separately, e.g. under `/opt/timetracker`). Everything local to a user, whether run from the CLI or a user-level unit, lives under `~/.local/share/timetracker` for data and `~/.config/timetracker` for configuration. User-level units therefore declare `ConfigurationDirectory=timetracker` but not `StateDirectory=` (which would resolve to `~/.local/state`), so the default data path applies. The server needs no separate "system mode" switch; it only honors those variables.
+
+Precedence for individual settings, highest first: command-line options, `TIMETRACKER_*` environment variables, the config file, built-in defaults. A missing config file is handled by context: in the CLI/ad hoc case the server writes a file with every setting at its default and short comments, and never overwrites an existing file. When systemd supplied the configuration directory, the server does not write to it (system config is often read-only); it runs on built-in defaults, logs that no file was found, and `timetracker init-config [--config PATH]` writes the defaults file explicitly. Unknown keys and invalid values are startup errors that name the key; nothing is silently ignored. Settings include at least: `bind_address`, `port`, `data_dir`, and the recovery/verification options of section 03/04. Configuration never changes API contracts or on-disk record formats.
+
 Implementation-agent instruction: implement only the assigned section and its minimal prerequisites; do not rewrite adjacent modules or silently change established contracts. Add focused tests and document any unresolved design decision.
 
 ## 01. Domain model and public schemas
@@ -163,7 +177,7 @@ Acceptance: quick start/pause/switch, capture/manual submission, persistent draf
 
 ## 11. Deployment, documentation, and integration
 
-Support running the service on a LAN host or generic VPS, without cloud-specific services. Offer a simple systemd or Docker Compose deployment path. Provide configuration for bind address, port, and data directory. Keep the data directory outside version control. No application-level security in v0; document that publicly exposing an unauthenticated write API is unsafe and leave security design for a later phase.
+Support running the service on a LAN host or generic VPS, without cloud-specific services. Offer a simple systemd or Docker Compose deployment path. Provide configuration for bind address, port, and data directory through the server configuration described in section 00. Keep the data directory outside version control. No application-level security in v0; document that publicly exposing an unauthenticated write API is unsafe and leave security design for a later phase.
 
 Documentation deliverables: README quickstart, architecture overview, API/OpenAPI contract, data format documentation, and short ADRs for append-only journal + mutable operational read model, client-generated UUIDs, and POST-only creation.
 
@@ -177,7 +191,7 @@ Integration acceptance: create, retry, patch, delete, autocomplete, report, rest
 4. How to identify identical POST retries after an entry has subsequently been edited (retain a canonical original-submission fingerprint or equivalent).
 5. Whether GET of a logically deleted entry returns 404 or 410, and behavior for repeat DELETE.
 6. Entry time semantics for manual records without known `started_at`, and reporting date filtering rules.
-7. Journal commit/recovery strategy for partial writes and a corrupted/non-final line.
+7. Journal commit/recovery strategy for partial writes and a corrupted/non-final line. (Resolved; see the journal recovery policy in `server/README.md`.)
 8. Whether saved reports are included in v0 or deferred.
 
 Do not invent decisions silently. For implementation work, make the smallest reversible choice, document it, and request a decision if it affects public behavior or data durability.

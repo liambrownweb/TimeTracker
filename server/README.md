@@ -38,3 +38,40 @@ will be enforced when the routes are implemented.
 - A single process is assumed to own the data directory; a lock serializes access within it.
 
 Attribute values are compared type-strictly everywhere (domain no-op detection and storage filters): `true`, `1` and `1.0` are all different values, so changing between them is a real change.
+
+## Journal recovery policy (spec decision #7)
+
+The journal is the recovery authority; operational records are the read model. Verification is read-only and runs before any repair. Repair writes only what verification flagged, and replaced or truncated bytes are copied to a `quarantine/` folder first. Nothing is deleted.
+
+**Journal integrity** (checked first):
+- Every event carries a checksum over its canonical content, so silent bit rot is detected even when the line still parses as JSON.
+- A torn final line in the newest file (unparseable, incomplete, or failing its checksum) is an unacknowledged write. It is quarantined and truncated, and its sequence number is reused.
+- Any other fault (a bad non-final line, a sequence gap, a duplicate `event_id` or `sequence`, an event outside its commit month) halts startup. The server reports file, line and reason, and is repaired only by explicit manual action. Events are never skipped.
+- Sequence numbers must be consecutive from 1 across month files.
+
+**Cross-check, per entry:**
+- Every journal `entry_id` has a record and every record has a create event.
+- `last_event_sequence` equals the entry's latest journal sequence.
+- `revision` equals the entry's event count.
+- The embedded history's event IDs equal the entry's journal event IDs.
+
+**Deep comparison:** replay the journal in memory and compare each record field by field. When it runs is configurable (`deep_check` setting):
+- `startup`: at every startup (the default).
+- `interval`: at startup only if at least `deep_check_days` days have passed, or at least `deep_check_events` journal events have been committed, since the last completed deep check. Either threshold may be unset, and the check runs when any set threshold is met.
+- `manual`: never automatically; run only when requested with the `verify --deep` command (for example from cron).
+
+Every automatic verification step can be disabled in the configuration, and all are on by default:
+- `verify_journal_on_startup`: full-journal checksum, sequence continuity, duplicate and month-placement checks.
+- `verify_cross_check_on_startup`: the per-entry journal-to-record 1:1 cross-check.
+- `deep_check`: as above.
+
+Torn-tail handling and the check that the journal tail matches the records' `last_event_sequence` are cheap and always run. A disabled check still runs on demand with `verify`, and `verify --deep` runs everything. "Events" in `deep_check_events` means committed journal events, not distinct entries touched.
+
+The time and journal sequence of the last completed deep check are kept in a small state file, so interval counting survives restarts. A deep check that is interrupted does not count as completed. A failed check always halts the server and reports the mismatch, whichever mode started it.
+
+**Repair:**
+- Events missing at an entry's tail are applied in order, idempotently by `event_id` and `sequence`.
+- An event missing from the middle of an entry's history means the entry is rebuilt from all of its journal events and its month file is rewritten. A missed event is never applied on top of later state.
+- A corrupt or mismatching operational file is moved to `*.corrupt-<time>` and regenerated from the journal. If the damage is not confined to one file, the whole store is rebuilt into a temporary directory, verified, and swapped in.
+
+**Detection:** startup verification, an on-demand `verify` command, and a runtime guard in the coordinator. If a record's `last_event_sequence` is not the expected predecessor, the request returns 503 and the store is flagged for repair.
