@@ -268,6 +268,8 @@ def apply_entry_update(
     attributes_delta: AttributeDelta | None = None
     if "attributes" in update.model_fields_set:
         requested = update.attributes
+        if requested is None:
+            raise ValueError("attributes cannot be null")
         attributes_to_set = {
             key: value
             for key, value in requested.set.items()
@@ -294,7 +296,7 @@ def apply_entry_update(
     history = list(entry.history)
     if not history:
         history.append(InitialHistory(kind="initial", snapshot=_snapshot(entry)))
-    changes = {
+    changes: dict[str, object] = {
         key: (attributes_delta if key == "attributes" else value)
         for key, value in changed_fields.items()
     }
@@ -303,7 +305,7 @@ def apply_entry_update(
             kind="update",
             recorded_at=recorded_at,
             event_id=event_id,
-            changes=EntryDelta(**changes),
+            changes=EntryDelta.model_validate(changes),
         )
     )
     return entry.model_copy(
