@@ -111,6 +111,16 @@ Recovery: the journal is the durable recovery authority; if a crash happens afte
 
 Acceptance: inject failures before journal append, after journal commit, and during operational replacement; restart produces one correct logical mutation and no duplicate event. Concurrent requests cannot lose updates.
 
+## 04.5. Configuration and verification controls
+
+Implement the configuration rules in §00 using `tomllib` and the standard library. Settings are `bind_address`, `port`, `data_dir`, `verify_journal_on_startup`, `verify_cross_check_on_startup`, `deep_check` (`startup`, `interval`, or `manual`), and the optional positive integer thresholds `deep_check_days` and `deep_check_events`. Interval mode requires at least one threshold; the first startup without a completed check runs one. Defaults enable both startup checks and use `deep_check = "startup"`. Configuration, environment, and CLI values must be validated, with errors identifying the setting.
+
+Persist the UTC completion time and journal sequence only after a successful deep comparison, using an atomic, durable state-file replacement. Interval mode runs a check when either configured threshold is reached; event counts are journal events. Invalid state and a stored sequence ahead of the journal are errors, not reasons to silently skip a check.
+
+Provide `timetracker init-config` and `timetracker verify [--deep]`. Verification checks journal integrity and operational correspondence without repairing or changing journal or entry data; a successful deep verification updates the schedule state. Report findings and return a nonzero exit status on corruption or mismatch. Never operate on a data directory concurrently with a running managed server. Startup always handles torn tails and checks the journal tail; the other checks follow their settings, and committed missing updates are reconciled before serving. A failed deep comparison halts startup and does not advance the schedule.
+
+Acceptance: cover configuration locations, overrides and validation, default-file creation without overwrites, systemd behavior, both interval thresholds and restart persistence, failed/interrupted checks, disabled checks, read-only on-demand verification, and startup recovery.
+
 ## 05. HTTP API — entries
 
 All endpoints under `/v0`, JSON request/response bodies, conventional status codes, and machine-readable error codes.

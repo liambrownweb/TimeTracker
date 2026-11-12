@@ -58,10 +58,11 @@ class JsonlEntryStore:
     lock; the store assumes it is the only process using the data directory.
     """
 
-    def __init__(self, data_dir: Path | str) -> None:
+    def __init__(self, data_dir: Path | str, *, clean_temps: bool = True) -> None:
         self._data_dir = Path(data_dir)
         self._entries_dir = self._data_dir / "entries"
         self._lock = threading.RLock()
+        self._clean_temps = clean_temps
         self._months: dict[_MonthKey, dict[UUID, EntryRecord]] = {}
         self._index: dict[UUID, _MonthKey] = {}
         self.rebuild()
@@ -69,7 +70,8 @@ class JsonlEntryStore:
     def rebuild(self) -> None:
         """Discard in-memory state and reload it deterministically from disk."""
         with self._lock:
-            self._remove_stale_temp_files()
+            if self._clean_temps:
+                self._remove_stale_temp_files()
             months: dict[_MonthKey, dict[UUID, EntryRecord]] = {}
             index: dict[UUID, _MonthKey] = {}
             for path in sorted(self._entries_dir.glob(_MONTH_GLOB)):

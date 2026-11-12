@@ -49,7 +49,7 @@ def encode_event(event: JournalEvent) -> bytes:
     return _canonical(payload) + b"\n"
 
 
-def decode_event(line: bytes) -> JournalEvent:
+def decode_event(line: bytes, *, verify_checksum: bool = True) -> JournalEvent:
     """Parse and verify one journal line (without its newline).
 
     Raises ValueError describing why the line is not a valid committed event.
@@ -64,7 +64,7 @@ def decode_event(line: bytes) -> JournalEvent:
     if not isinstance(stored, str):
         raise ValueError("missing checksum")
     event = _EVENT_ADAPTER.validate_json(_canonical(payload))
-    if not hmac.compare_digest(stored, event_checksum(event)):
+    if verify_checksum and not hmac.compare_digest(stored, event_checksum(event)):
         raise ValueError("checksum mismatch")
     return event
 
@@ -88,7 +88,8 @@ class JsonlJournal:
     """
 
     def __init__(
-        self, data_dir: Path | str, quarantine_dir: Path | str | None = None
+        self, data_dir: Path | str, quarantine_dir: Path | str | None = None,
+        *, verify_integrity: bool = True, recover_tail: bool = True,
     ) -> None:
         self._data_dir = Path(data_dir)
         self._journal_dir = self._data_dir / "journal"
@@ -98,6 +99,8 @@ class JsonlJournal:
             else self._data_dir / "quarantine"
         )
         self._lock = threading.RLock()
+        self._verify_integrity = verify_integrity
+        self._recover_tail = recover_tail
         self._last_sequence = 0
         self._last_month: _MonthKey | None = None
         self._event_ids: set[UUID] = set()
@@ -177,21 +180,21 @@ class JsonlJournal:
         files = sorted(self._journal_dir.glob(_MONTH_GLOB))
         expected = 1
         for index, path in enumerate(files):
-            recover = index == len(files) - 1
+            recover = self._recover_tail and index == len(files) - 1
             for line_number, event in self._parse_file(path, recover=recover):
-                if event.sequence != expected:
+                if self._verify_integrity and event.sequence != expected:
                     raise StorageCorruptionError(
                         path,
                         line_number,
                         f"expected sequence {expected}, found {event.sequence}",
                     )
-                if event.event_id in self._event_ids:
+                if self._verify_integrity and event.event_id in self._event_ids:
                     raise StorageCorruptionError(
                         path, line_number, f"duplicate event id {event.event_id}"
                     )
                 self._event_ids.add(event.event_id)
                 self._last_month = _month_of(event)
-                expected += 1
+                expected = event.sequence + 1
         self._last_sequence = expected - 1
 
     def _parse_file(
@@ -210,12 +213,12 @@ class JsonlJournal:
         events: list[tuple[int, JournalEvent]] = []
         for line_number, line in enumerate(lines, start=1):
             try:
-                event = decode_event(line)
+                event = decode_event(line, verify_checksum=self._verify_integrity)
             except ValueError as exc:
                 raise StorageCorruptionError(
                     path, line_number, f"invalid journal event: {exc}"
                 ) from exc
-            if _month_of(event) != key:
+            if self._verify_integrity and _month_of(event) != key:
                 raise StorageCorruptionError(
                     path,
                     line_number,

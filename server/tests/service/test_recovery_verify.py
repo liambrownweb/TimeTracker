@@ -202,6 +202,9 @@ def test_no_op_event_is_classified_like_replay(world: World) -> None:
     assert report.findings == []
     assert not report.repaired
     assert store.get(entry.id).revision == 1
+    unchecked = verify_and_repair(store, journal, NONE)
+    assert not unchecked.ran_cross_check
+    assert unchecked.skipped_no_ops == [no_op.event_id]
 
 
 def test_a_changed_type_is_not_treated_as_a_no_op(world: World) -> None:

@@ -156,7 +156,8 @@ def _tail_matches(entries: EntryStore, state: JournalState) -> bool:
         return not entries.list(include_deleted=True)
     tail = state.events[-1]
     record = entries.get(tail.entry_id)
-    if record is None or record.last_event_sequence != tail.sequence:
+    expected = state.replayed.records[tail.entry_id]
+    if record is None or record.last_event_sequence != expected.last_event_sequence:
         return False
     return all(
         r.last_event_sequence <= tail.sequence for r in entries.list(include_deleted=True)

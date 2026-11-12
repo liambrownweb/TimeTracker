@@ -34,14 +34,14 @@ will be enforced when the routes are implemented.
 - **Writes** replace the whole month file: write a temporary file in the same directory, fsync it, `os.replace` it over the original, then fsync the directories. A failed write leaves the original file and in-memory state untouched, and stale temporary files are removed at startup.
 - **Updates and deletion** both go through `update(record)` with the record produced by `apply_entry_update` / `delete_entry`. There is no separate `delete`; logical deletion is just a record with `deleted=true`.
 - **Corruption** (malformed line, duplicate id, record in the wrong month file) raises `StorageCorruptionError` naming the file and line. Nothing is silently skipped.
-- **`list`** excludes deleted entries unless `include_deleted=True`, orders by `(created_at, id)`, and filters by exact `task` and exact attribute values (`true` is not `1`, `1` is not `1.0`). Date filtering is deferred until the entry-time semantics are decided.
+- **`list`** excludes deleted entries unless `include_deleted=True`, orders by `(started_at or created_at, id)`, and filters by exact `task` and exact attribute values (`true` is not `1`, `1` is not `1.0`). Date filtering is deferred until the entry-time semantics are decided.
 - A single process is assumed to own the data directory; a lock serializes access within it.
 
 Attribute values are compared type-strictly everywhere (domain no-op detection and storage filters): `true`, `1` and `1.0` are all different values, so changing between them is a real change.
 
 ## Journal recovery policy (spec decision #7)
 
-The journal is the recovery authority; operational records are the read model. Verification is read-only and runs before any repair. Repair writes only what verification flagged, and replaced or truncated bytes are copied to a `quarantine/` folder first. Nothing is deleted.
+The journal is the recovery authority; operational records are the read model. On-demand verification is read-only. Startup recovery can replace flagged operational records; the current targeted replacement does not preserve the old month file. Torn journal tails and unreadable operational trees are quarantined. Preserving replaced month files remains a recovery-policy gap.
 
 **Journal integrity** (checked first):
 - Every event carries a checksum over its canonical content, so silent bit rot is detected even when the line still parses as JSON.
@@ -107,4 +107,24 @@ A retried `POST /v0/entries` for an existing UUID is compared with the entry's o
 - **Runtime guard:** each entry's `last_event_sequence` must equal the sequence the journal says it should have. A mismatch, or a disagreement about whether an entry exists, returns 503 once, flags the store, and the next request repairs it.
 - **Clock:** commit times never go backwards. If the system clock steps back (including across a month boundary) the event is stamped with the previous event's time, so the journal's month ordering cannot be violated.
 - **Startup:** `open_entry_store` quarantines unreadable operational files and starts empty; `EntryCoordinator` then runs `verify_and_repair` with `VerificationOptions(cross_check, deep_check)`. The journal is always replayed in memory (the coordinator needs it); the options control whether records are compared. The cheap tail check always runs and escalates to the cross-check on a mismatch, including a store that is ahead of the journal. The cross-check and deep comparison classify provable no-op events exactly as `replay` does; they are reported in `skipped_no_ops`, never treated as damage.
-- **Not yet built:** the configuration loader that sets `VerificationOptions`, the deep-check schedule and state file, and the `verify` command.
+- **Configured startup:** use `timetracker.verification.open_server(settings)` as a context manager. It holds an exclusive data-directory lock, opens the journal and coordinator, reconciles detected recovery gaps, and performs a scheduled deep comparison before yielding. The HTTP server and integration with its lifecycle are still future work.
+
+## Configuration and verification (§04.5)
+
+Run `timetracker init-config` to create the default configuration explicitly. The loader also creates it on first non-systemd use, without overwriting an existing file. If `CONFIGURATION_DIRECTORY` is set and the file is absent, it logs a warning and uses defaults instead. `--config PATH` selects a file, and `TIMETRACKER_CONFIG` does so when no CLI path is given.
+
+Configuration is TOML. `bind_address` defaults to `127.0.0.1`, `port` to `8000`, and `data_dir` to `$STATE_DIRECTORY` if supplied or `$XDG_DATA_HOME/timetracker` (default `~/.local/share/timetracker`). Settings take precedence in this order: command-line options, `TIMETRACKER_<SETTING>` environment variables, file, built-in defaults. Unknown file keys and invalid values are errors. For example:
+
+```toml
+verify_journal_on_startup = true
+verify_cross_check_on_startup = true
+deep_check = "interval"
+deep_check_days = 7
+deep_check_events = 1000
+```
+
+`deep_check` is `startup` (default), `interval`, or `manual`. Interval mode requires at least one positive integer threshold; either threshold makes a check due. The first interval startup checks immediately. A clean completed deep check atomically records its UTC time and latest journal sequence in `verification-state.json` under the data directory. Invalid state, or a state sequence ahead of the journal, stops startup. Disabling checks reduces protection: even when journal integrity verification is disabled, events must still parse and replay; a scheduled deep check always forces full journal integrity verification.
+
+Run `timetracker verify` for full journal integrity and the record cross-check, or `timetracker verify --deep` to additionally compare every field. Both return nonzero on errors or mismatches and never repair entry or journal data; a clean deep check updates the schedule state. A torn journal tail is reported rather than repaired by this command. Verification and a managed server cannot run concurrently against the same directory: the command fails if the directory is locked. Other programs that bypass the managed lock must not access the directory concurrently.
+
+The current coordinator still replays the journal at startup, even when deep comparison is disabled. `init-config` and `verify` are available now; there is no HTTP-server launch command until the API is implemented. The server is unauthenticated and must not be exposed directly to the public internet.
