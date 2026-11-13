@@ -138,3 +138,9 @@ Run `timetracker serve` to start the server; `--config`, `--data-dir`, `--bind-a
 - `GET /v0/health` returns `{"status":"ok"}` while the application is serving.
 
 Errors use `{"error":{"code":"...","message":"..."}}`; validation errors return 422 and storage unavailability returns 503. Errors do not expose storage paths. Storage exceptions are logged server-side. The managed server holds the data-directory lock throughout its lifetime; stop it before using `verify`.
+
+## Completion and field discovery (§06)
+
+- `GET /v0/fields` reports attribute names observed in current nondeleted entries with their observed JSON types. Type labels are `null`, `boolean`, `integer`, `number`, `string`, `array`, and `object`. A field with values of multiple types lists each type once in lexical order.
+- `GET /v0/completions?field=task&q=vac&limit=20` returns `{"field":"task","values":[...]}`. `field` is exact and case-sensitive; use `task` for task names or an exact attribute name. `q` defaults to the empty string and matches a case-insensitive Unicode-casefolded prefix. Only scalar JSON attribute values (including booleans and null) are suggested; arrays and objects are omitted. Results are type-strictly deduplicated, sorted by normalized display text, type label, then canonical JSON, with a default limit of 20 and maximum of 100.
+- Both endpoints read current nondeleted entries from the operational store on every request. Thus edits, deletion, and restart are reflected without a separate registration step or rebuildable index.

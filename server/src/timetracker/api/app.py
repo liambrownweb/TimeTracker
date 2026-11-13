@@ -16,6 +16,12 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from timetracker.api.v0.schemas import EntryCreateRequest, EntryPatchRequest, EntryResponse
+from timetracker.api.v0.discovery import (
+    CompletionResponse,
+    FieldInfo,
+    completions,
+    discover_fields,
+)
 from timetracker.config import Settings
 from timetracker.domain.entries import EntryCreate
 from timetracker.service.coordinator import EntryCoordinator
@@ -157,5 +163,25 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/v0/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
+
+    @app.get("/v0/fields", response_model=list[FieldInfo], responses=common)
+    def fields(
+        coordinator: Annotated[EntryCoordinator, Depends(_coordinator)],
+    ) -> list[FieldInfo]:
+        return discover_fields(coordinator.list())
+
+    @app.get("/v0/completions", response_model=CompletionResponse, responses=common)
+    def field_completions(
+        coordinator: Annotated[EntryCoordinator, Depends(_coordinator)],
+        field: Annotated[str, Query(min_length=1, max_length=128)],
+        q: Annotated[str, Query(max_length=128)] = "",
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> CompletionResponse:
+        return completions(
+            coordinator.list(),
+            field=field,
+            query=q,
+            limit=limit,
+        )
 
     return app
