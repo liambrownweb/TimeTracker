@@ -24,6 +24,7 @@ entry identity and deletion timestamp.
 
 The v0 API contract for logically deleted entries is direct `GET` returning
 `410 Gone` and repeated `DELETE` returning `204 No Content`.
+
 ## Operational storage
 
 `JsonlEntryStore` (`timetracker.storage`) implements the `EntryStore` protocol (`get`, `list`, `create`, `update`).
@@ -43,23 +44,27 @@ Attribute values are compared type-strictly everywhere (domain no-op detection a
 The journal is the recovery authority; operational records are the read model. On-demand verification is read-only. Startup recovery may replace flagged operational records without preserving the old month file: the working copy is derived from the journal. Torn journal tails and unreadable operational trees are still quarantined.
 
 **Journal integrity** (checked first):
+
 - Every event carries a checksum over its canonical content, so silent bit rot is detected even when the line still parses as JSON.
 - A torn final line in the newest file is an unacknowledged write. A write is acknowledged only after its line, including the terminating newline, is fsynced, so a final line that lacks its newline is torn however much of it parses. It is copied to `quarantine/`, truncated, and its sequence number is reused. A newline-terminated line that fails parsing or its checksum is never treated as torn; it is corruption and halts startup.
 - Any other fault (a bad non-final line, a sequence gap, a duplicate `event_id` or `sequence`, an event outside its commit month) halts startup. The server reports file, line and reason, and is repaired only by explicit manual action. Events are never skipped.
 - Sequence numbers must be consecutive from 1 across month files.
 
 **Cross-check, per entry:**
+
 - Every journal `entry_id` has a record and every record has a create event.
 - `last_event_sequence` equals the entry's latest journal sequence.
 - `revision` equals the entry's event count.
 - The embedded history's event IDs equal the entry's journal event IDs.
 
 **Deep comparison:** replay the journal in memory and compare each record field by field. When it runs is configurable (`deep_check` setting):
+
 - `startup`: at every startup (the default).
 - `interval`: at startup only if at least `deep_check_days` days have passed, or at least `deep_check_events` journal events have been committed, since the last completed deep check. Either threshold may be unset, and the check runs when any set threshold is met.
 - `manual`: never automatically; run only when requested with the `verify --deep` command (for example from cron).
 
 Every automatic verification step can be disabled in the configuration, and all are on by default:
+
 - `verify_journal_on_startup`: full-journal checksum, sequence continuity, duplicate and month-placement checks.
 - `verify_cross_check_on_startup`: the per-entry journal-to-record 1:1 cross-check.
 - `deep_check`: as above.
@@ -69,6 +74,7 @@ Torn-tail handling and the check that the journal tail matches the records' `las
 The time and journal sequence of the last completed deep check are kept in a small state file, so interval counting survives restarts. A deep check that is interrupted does not count as completed. A failed check always halts the server and reports the mismatch, whichever mode started it.
 
 **Repair:**
+
 - Events missing at an entry's tail are applied in order, idempotently by `event_id` and `sequence`.
 - An event missing from the middle of an entry's history means the entry is rebuilt from all of its journal events and its month file is rewritten. A missed event is never applied on top of later state.
 - Unreadable operational files, or a record with no create event, cause the whole `entries/` tree to be moved to `quarantine/entries-<time>-<id>/` and regenerated from the journal. (Rewriting only the damaged file is a possible later optimization; a full rebuild is correct in every case and is rare.) After any repair a full deep comparison must come back clean, otherwise startup fails.
@@ -144,3 +150,12 @@ Errors use `{"error":{"code":"...","message":"..."}}`; validation errors return 
 - `GET /v0/fields` reports attribute names observed in current nondeleted entries with their observed JSON types. Type labels are `null`, `boolean`, `integer`, `number`, `string`, `array`, and `object`. A field with values of multiple types lists each type once in lexical order.
 - `GET /v0/completions?field=task&q=vac&limit=20` returns `{"field":"task","values":[...]}`. `field` is exact and case-sensitive; use `task` for task names or an exact attribute name. `q` defaults to the empty string and matches a case-insensitive Unicode-casefolded prefix. Only scalar JSON attribute values (including booleans and null) are suggested; arrays and objects are omitted. Results are type-strictly deduplicated, sorted by normalized display text, type label, then canonical JSON, with a default limit of 20 and maximum of 100.
 - Both endpoints read current nondeleted entries from the operational store on every request. Thus edits, deletion, and restart are reflected without a separate registration step or rebuildable index.
+
+## Reporting (§07)
+
+`GET /v0/reports` lists the built-in report; `GET /v0/reports/time` returns `group_by`, overall `entry_count` and `duration_seconds`, and a `groups` array. Each group has `value`, `missing`, `entry_count`, and `duration_seconds`. Empty results have zero totals and an empty array.
+
+- Use `group_by=task` (the default) for task names, or an exact attribute name such as `group_by=project`. Prefix an attribute name with `attribute:` to disambiguate it from the task field, for example `group_by=attribute:task`; an attribute whose name begins with `attribute:` also needs that prefix. Missing attributes have `missing=true` and `value=null`, distinct from an explicitly null attribute (`missing=false`). JSON values, including arrays and objects, group type-strictly: `true`, `1`, and `1.0` are different groups. Groups are ordered by missing status, JSON type, and canonical JSON value.
+- Optional `from` and `to` are ISO 8601 UTC timestamps. The interval is `[from, to)`; either bound may be omitted, and `from` must precede `to`. Filter using the current `started_at`, or `created_at` if it is absent. Each matching entry contributes its full duration, even when it extends beyond the interval.
+- Optional `task` and `attributes` filters match the entries endpoint; `attributes` is a JSON object in the query string with type-strict exact matching. All filters combine with AND. Deleted entries are excluded.
+- Reports read the operational store and reflect edits without replaying the journal. Saved reports are deferred.

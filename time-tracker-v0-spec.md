@@ -7,6 +7,7 @@ Status: Prototype specification, 2026-11-06
 Build a personal, domestic-first time tracker with an HTTP JSON API, central server, KDE Plasma client, and Android client. The service can run on a LAN host or independent VPS; no cloud-vendor dependency. The central service alone retains acknowledged historical time records. Each client keeps unsent entries and in-progress timer drafts locally until acknowledged or completed, respectively.
 
 Principles:
+
 - Capture without prior setup: new task names, categories, locations, and other metadata values become available for future completion.
 - API resources and persistence models are separate contracts.
 - Prefer readable, portable text files and simple, testable components.
@@ -19,7 +20,8 @@ Principles:
 Implementation recommendations (not irrevocable requirements): Python 3, FastAPI, Pydantic, pytest, JSONL, and DuckDB for reporting. Favor standard library facilities when adequate.
 
 Repository layout (suggested):
-```
+
+```text
 README.md
 pyproject.toml
 docs/{architecture.md,api.md,data-model.md,decisions/}
@@ -34,7 +36,7 @@ clients/{plasma/,android/}
 Server settings live in a TOML file parsed with the standard library (`tomllib`). Locations are resolved in this order; the first that applies wins:
 
 | | Config file | Data directory |
-|---|---|---|
+||---|---|---|
 | Explicit | `--config PATH` / `TIMETRACKER_CONFIG` | `data_dir` setting / `TIMETRACKER_DATA_DIR` |
 | Under systemd (`ConfigurationDirectory=` / `StateDirectory=`) | `$CONFIGURATION_DIRECTORY/config.toml` | `$STATE_DIRECTORY` |
 | Otherwise (CLI or ad hoc) | `$XDG_CONFIG_HOME/timetracker/config.toml` (default `~/.config/timetracker/`) | `$XDG_DATA_HOME/timetracker` (default `~/.local/share/timetracker`) |
@@ -48,6 +50,7 @@ Implementation-agent instruction: implement only the assigned section and its mi
 ## 01. Domain model and public schemas
 
 An **entry** represents one completed recorded activity. Its stable `id` is a client-generated UUID. Minimum public fields:
+
 - `id`: UUID
 - `task`: nonempty string
 - `duration_seconds`: nonnegative integer (whole-second resolution for v0)
@@ -55,6 +58,7 @@ An **entry** represents one completed recorded activity. Its stable `id` is a cl
 - `attributes`: dictionary of extensible, typed metadata (e.g., `category`, `project`, `location`, `billable`)
 
 Server-managed fields:
+
 - `created_at`, `updated_at`: UTC recording timestamps
 - `revision`: integer, starting at 1
 - `deleted`: boolean, initially false
@@ -63,6 +67,7 @@ Server-managed fields:
 - `schema_version`: operational record format version
 
 An operational entry holds its **latest state in outer fields** and an embedded `history` array:
+
 - On creation, `history=[]`.
 - On the first meaningful change, add an `initial` snapshot of the pre-change state, followed by an `update` containing only changed fields.
 - Later changes append only deltas; each change carries its UTC timestamp and journal `event_id`.
@@ -97,6 +102,7 @@ Acceptance: a fresh operational store can be rebuilt by ordered journal replay; 
 ## 04. Transaction coordinator and recovery
 
 All mutations follow this order:
+
 1. Acquire write lock.
 2. Validate request against current operational state, including existence and revision where applicable.
 3. Compute the meaningful delta and corresponding journal event.
@@ -133,6 +139,7 @@ All endpoints under `/v0`, JSON request/response bodies, conventional status cod
 - `GET /v0/health`: simple service health response.
 
 Error example:
+
 ```json
 {"error":{"code":"ENTRY_NOT_FOUND","message":"No entry exists with the specified ID."}}
 ```
@@ -155,9 +162,12 @@ Acceptance: a newly submitted task/location appears in completion; no predefined
 Expose reports through `/v0`, initially using current operational entry state only. Minimum capability: filter by date range and arbitrary attributes, group by task or an attribute, aggregate total duration and entry count. Deleted entries are excluded by default. Date ranges use clearly documented inclusive/exclusive boundaries and UTC semantics.
 
 Suggested endpoints:
+
 - `GET /v0/reports`: discover report definitions.
 - `GET /v0/reports/time?group_by=task&from=...&to=...`: basic aggregate report.
 - `GET /v0/reports/{id}`: retrieve a saved definition when saved reports are implemented.
+
+The time report uses current `started_at`, falling back to `created_at` when absent; the entire duration belongs to the entry's effective start, even if the activity extends across a boundary. `from` is inclusive and `to` is exclusive; both are optional ISO 8601 UTC timestamps, and `from` must be earlier than `to` when both are given. Exact task and type-strict JSON attribute filters use the entries API semantics. `group_by=task` groups by task; any other value names an attribute, optionally prefixed `attribute:` (required for an attribute named `task`). Missing attributes form their own group, distinct from explicit JSON null. Empty results have zero totals and no groups. Saved report definitions are deferred.
 
 DuckDB is an optional implementation mechanism, not an API dependency. Reporting must not need journal replay on every query. A later extension may add historical/as-of reports from the journal.
 
@@ -200,8 +210,8 @@ Integration acceptance: create, retry, patch, delete, autocomplete, report, rest
 3. Whether optimistic concurrency (`revision`/`If-Match`) is mandatory in v0.
 4. How to identify identical POST retries after an entry has subsequently been edited (retain a canonical original-submission fingerprint or equivalent). (Resolved; see `server/README.md`.)
 5. Whether GET of a logically deleted entry returns 404 or 410, and behavior for repeat DELETE.
-6. Entry time semantics for manual records without known `started_at`, and reporting date filtering rules. (Partly resolved: storage placement uses the original `started_at`, else the commit month. Reporting date filtering rules remain open.)
+6. Entry time semantics for manual records without known `started_at`, and reporting date filtering rules. (Resolved: reports use the current `started_at`, falling back to `created_at`, with inclusive `from` and exclusive `to`; the entire duration is assigned to that start.)
 7. Journal commit/recovery strategy for partial writes and a corrupted/non-final line. (Resolved; see the journal recovery policy in `server/README.md`.)
-8. Whether saved reports are included in v0 or deferred.
+8. Whether saved reports are included in v0 or deferred. (Resolved: deferred.)
 
 Do not invent decisions silently. For implementation work, make the smallest reversible choice, document it, and request a decision if it affects public behavior or data durability.

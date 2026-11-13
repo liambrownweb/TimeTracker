@@ -22,8 +22,9 @@ from timetracker.api.v0.discovery import (
     completions,
     discover_fields,
 )
+from timetracker.api.v0.reports import ReportDefinition, TimeReport, time_report
 from timetracker.config import Settings
-from timetracker.domain.entries import EntryCreate
+from timetracker.domain.entries import EntryCreate, UtcDateTime
 from timetracker.service.coordinator import EntryCoordinator
 from timetracker.service.errors import EntryConflictError, EntryDeletedError, StoreUnavailableError
 from timetracker.storage import EntryNotFoundError, StorageError
@@ -182,6 +183,30 @@ def create_app(settings: Settings) -> FastAPI:
             field=field,
             query=q,
             limit=limit,
+        )
+
+    @app.get("/v0/reports", response_model=list[ReportDefinition], responses=common)
+    def report_definitions() -> list[ReportDefinition]:
+        return [ReportDefinition(id="time", title="Time by group", path="/v0/reports/time")]
+
+    @app.get("/v0/reports/time", response_model=TimeReport, responses=common)
+    def report_time(
+        coordinator: Annotated[EntryCoordinator, Depends(_coordinator)],
+        group_by: Annotated[str, Query(min_length=1)] = "task",
+        start: Annotated[UtcDateTime | None, Query(alias="from")] = None,
+        end: Annotated[UtcDateTime | None, Query(alias="to")] = None,
+        task: str | None = None,
+        attributes: Annotated[str | None, Query(description="JSON object of exact, type-strict attribute filters")] = None,
+    ) -> TimeReport:
+        if start is not None and end is not None and start >= end:
+            raise RequestValidationError(
+                [{"loc": ("query", "to"), "msg": "must be later than from", "type": "value_error"}]
+            )
+        return time_report(
+            coordinator.list(task=task, attributes=_parse_attributes(attributes)),
+            group_by=group_by,
+            start=start,
+            end=end,
         )
 
     return app
