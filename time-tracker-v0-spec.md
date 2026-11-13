@@ -181,7 +181,35 @@ Persist drafts locally across app/widget restarts. Store a running timer's start
 
 Cross-device timer coordination is **out of scope for v0**. Multiple widgets/devices can run independently; the user manages that choice.
 
-Acceptance: switching tasks pauses the previous timer; manual duration edits persist; restart preserves drafts; offline submissions queue; lost acknowledgments retry safely; successful acknowledgment removes queued data.
+### Shared behavior
+
+This section defines a common behavioral contract, not a requirement for a shared implementation library. The Plasma and Android clients implement it in their native technologies and run equivalent acceptance scenarios.
+
+**Drafts and timers:**
+
+- Each client instance may hold multiple drafts, but at most one timer is running within that instance. Drafts preserve task, attributes, optional activity start time, and accumulated duration. Duration must be nonnegative and is submitted as whole seconds. A retrospective entry may omit `started_at`; do not invent one.
+- Starting or resuming a draft pauses any other running timer in the same instance, preserving its elapsed time. Pausing or stopping freezes the duration; stopping leaves the draft available for review and submission. A paused or stopped duration can be edited. Record enough precision internally that repeated pause/resume operations do not discard fractional elapsed time.
+- A running timer continues across an app or device shutdown: on restart, include elapsed shutdown time until the user pauses or stops it. Persist the running reference and accumulated duration before reporting the timer as started, paused, switched, or stopped. Reconstruct elapsed time independently of UI refreshes.
+- Use a monotonic elapsed-time source when available. Persist a UTC wall-clock reference for reconstruction when the monotonic source cannot survive restart or reboot. Detect clock discontinuities where the platform permits, including a reconstructed negative interval; never silently accept a negative duration. If a clock change is detected, or elapsed time cannot be trusted, mark the duration uncertain and require user review before submission. A wall-clock change while the device is off may be undetectable; document that limitation rather than promising detection.
+
+**Submission and delivery:**
+
+- On submission, create a client-generated UUID and persist a complete pending request, its destination service URL, and delivery status before sending. Transitioning a draft to a pending request must not lose both copies after an interruption. Persist the initial payload unchanged for every retry; changes require a separate user-directed submission with a new UUID. Follow the §01 public create schema and preserve JSON attribute types.
+- Treat a valid `201` creation or `200` identical-retry response from that destination, with a matching entry UUID, as acknowledgment. This includes a `200` response for an entry that has since been deleted. Only then durably remove the pending copy. A response with an unexpected UUID or an invalid/unverifiable response is not acknowledgment.
+- Keep requests pending after network failures, timeouts, lost responses, HTTP 408, 429, and server 5xx errors; retry automatically when practical with bounded backoff, retaining the same UUID and payload. The UI shows pending status. Do not retry permanent client errors such as 409 conflicts or 422 validation failures automatically: retain the request and expose the error for user action. No failure silently discards a pending request.
+- Changing the configured service URL affects new submissions only. Existing pending requests remain bound to their original service, including their retries; never send them to a different service automatically. If that service is unavailable, retain and show them. Any discard, correction, or resubmission must be an explicit user action; retain the original UUID and payload unless the user deliberately creates a new submission.
+- Persist draft, timer, and pending-request transitions durably using each platform's local storage facilities. Failed writes must be surfaced, not presented as successful actions. Do not require a permanent local history after acknowledgment.
+
+### Equivalent acceptance scenarios
+
+Both clients must exercise these scenarios against controllable clocks, persistent storage, and a simulated service:
+
+1. Start draft A, advance 10 seconds, then start B: A is paused with 10 seconds, B is the only running timer. Advancing 5 more seconds changes B but not A; resuming A pauses B.
+2. Pause a draft, edit its duration to 75 seconds, restart the application, and confirm the draft and edited duration remain. Stopping a running timer likewise freezes it for review.
+3. Start a timer at a known instant, terminate the app or device, advance 30 seconds, and restart: the timer is still running and includes the 30 seconds. Simulate a detectable backward or inconsistent clock change: the client marks the result uncertain and requires review instead of submitting a negative or silently trusted duration.
+4. Submit while offline: a pending request remains after restart with the same UUID, payload, and destination. Recover connectivity and acknowledge it with a matching 201: remove it only after acknowledgment.
+5. Simulate a server commit followed by a lost response: retry the identical request with the same UUID; a matching 200 acknowledges it without a second logical entry. A 503 or 429 leaves it pending; a 409 or 422 retains it in an actionable error state without automatic retries. A successful response with a different UUID must not clear it.
+6. Queue an entry for service A, change configuration to service B, and queue another entry: the first remains addressed to A and the second to B, including after restart. A failed local persistence operation must not claim the draft transition or submission succeeded.
 
 ## 09. KDE Plasma client
 
