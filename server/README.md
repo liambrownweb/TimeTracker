@@ -23,8 +23,7 @@ client-submitted entry; update events carry the delta; delete events carry the
 entry identity and deletion timestamp.
 
 The v0 API contract for logically deleted entries is direct `GET` returning
-`410 Gone` and repeated `DELETE` returning `204 No Content`. These HTTP statuses
-will be enforced when the routes are implemented.
+`410 Gone` and repeated `DELETE` returning `204 No Content`.
 ## Operational storage
 
 `JsonlEntryStore` (`timetracker.storage`) implements the `EntryStore` protocol (`get`, `list`, `create`, `update`).
@@ -41,7 +40,7 @@ Attribute values are compared type-strictly everywhere (domain no-op detection a
 
 ## Journal recovery policy (spec decision #7)
 
-The journal is the recovery authority; operational records are the read model. On-demand verification is read-only. Startup recovery can replace flagged operational records; the current targeted replacement does not preserve the old month file. Torn journal tails and unreadable operational trees are quarantined. Preserving replaced month files remains a recovery-policy gap.
+The journal is the recovery authority; operational records are the read model. On-demand verification is read-only. Startup recovery may replace flagged operational records without preserving the old month file: the working copy is derived from the journal. Torn journal tails and unreadable operational trees are still quarantined.
 
 **Journal integrity** (checked first):
 - Every event carries a checksum over its canonical content, so silent bit rot is detected even when the line still parses as JSON.
@@ -127,4 +126,15 @@ deep_check_events = 1000
 
 Run `timetracker verify` for full journal integrity and the record cross-check, or `timetracker verify --deep` to additionally compare every field. Both return nonzero on errors or mismatches and never repair entry or journal data; a clean deep check updates the schedule state. A torn journal tail is reported rather than repaired by this command. Verification and a managed server cannot run concurrently against the same directory: the command fails if the directory is locked. Other programs that bypass the managed lock must not access the directory concurrently.
 
-The current coordinator still replays the journal at startup, even when deep comparison is disabled. `init-config` and `verify` are available now; there is no HTTP-server launch command until the API is implemented. The server is unauthenticated and must not be exposed directly to the public internet.
+The current coordinator still replays the journal at startup, even when deep comparison is disabled.
+
+## HTTP API (§05)
+
+Run `timetracker serve` to start the server; `--config`, `--data-dir`, `--bind-address`, `--port`, and the verification options override the file and environment. The default bind address is localhost. The server is unauthenticated and **must not be exposed directly to the public internet**. Interactive OpenAPI documentation is available at `/docs` and the schema at `/openapi.json`.
+
+- `POST /v0/entries` creates with a client UUID (201 and `Location`); an identical retry returns the current entry (200), including a deleted one. A different original submission using that UUID returns 409.
+- `GET /v0/entries` returns an unpaginated JSON array of live entries in activity-time order (`started_at` or `created_at`, then UUID). `task` is an optional exact match. `attributes` is an optional JSON object encoded as a query parameter, for example `?attributes=%7B%22billable%22%3Atrue%7D`. Each supplied attribute must match exactly, with JSON types distinguished. The filters combine with AND.
+- `GET` and `PATCH /v0/entries/{id}` return 404 for unknown IDs and 410 for deleted entries. PATCH uses the explicit `attributes.set`/`attributes.remove` contract; an empty or unchanged patch is a successful no-op. `DELETE` returns 204 for both a new and repeated logical deletion, or 404 for an unknown ID.
+- `GET /v0/health` returns `{"status":"ok"}` while the application is serving.
+
+Errors use `{"error":{"code":"...","message":"..."}}`; validation errors return 422 and storage unavailability returns 503. Errors do not expose storage paths. Storage exceptions are logged server-side. The managed server holds the data-directory lock throughout its lifetime; stop it before using `verify`.

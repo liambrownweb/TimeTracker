@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 from typing import Annotated, Literal, Union
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from pydantic import (
     JsonValue,
     PlainSerializer,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -22,6 +24,19 @@ from pydantic import (
 
 OPERATIONAL_SCHEMA_VERSION = 1
 JOURNAL_EVENT_SCHEMA_VERSION = 1
+
+
+def validate_finite_json(value: object) -> object:
+    """Reject non-JSON numeric values at every depth."""
+    if isinstance(value, float) and not isfinite(value):
+        raise ValueError("JSON numbers must be finite")
+    if isinstance(value, dict):
+        for item in value.values():
+            validate_finite_json(item)
+    elif isinstance(value, list):
+        for item in value:
+            validate_finite_json(item)
+    return value
 
 
 def json_equal(left: object, right: object) -> bool:
@@ -77,6 +92,8 @@ class EntryCreate(DomainModel):
     started_at: UtcDateTime | None = None
     attributes: dict[str, JsonValue] = Field(default_factory=dict)
 
+    _finite_attributes = field_validator("attributes", mode="before")(validate_finite_json)
+
     @model_validator(mode="after")
     def task_must_not_be_whitespace(self) -> EntryCreate:
         if not self.task.strip():
@@ -97,6 +114,8 @@ class AttributeDelta(DomainModel):
 
     set: dict[str, JsonValue] = Field(default_factory=dict)
     remove: list[str] = Field(default_factory=list)
+
+    _finite_values = field_validator("set", mode="before")(validate_finite_json)
 
     @model_validator(mode="after")
     def operations_must_be_unambiguous(self) -> AttributeDelta:

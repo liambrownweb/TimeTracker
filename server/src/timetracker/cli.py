@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import os
 import sys
@@ -34,6 +35,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     check = commands.add_parser("verify", help="verify without repairing")
     _settings_arguments(check)
     check.add_argument("--deep", action="store_true", help="compare every record field")
+    serve = commands.add_parser("serve", help="run the HTTP server")
+    _settings_arguments(serve)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     try:
@@ -47,6 +50,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             if key not in {"command", "config", "deep"} and value is not None
         }
         settings = load_config(config=args.config, overrides=overrides)
+        if args.command == "serve":
+            uvicorn = importlib.import_module("uvicorn")
+
+            from timetracker.api.app import create_app
+
+            uvicorn.run(create_app(settings), host=settings.bind_address, port=settings.port)
+            return 0
         findings = verify(settings, deep=args.deep)
         if findings:
             for finding in findings:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from timetracker.domain.entries import (
     AttributeDelta,
@@ -12,6 +12,7 @@ from timetracker.domain.entries import (
     EntryRecord,
     EntryUpdate,
     UtcDateTime,
+    validate_finite_json,
 )
 
 
@@ -21,6 +22,15 @@ class EntryCreateRequest(DomainModel):
     duration_seconds: int = Field(ge=0)
     started_at: UtcDateTime | None = None
     attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+    _finite_attributes = field_validator("attributes", mode="before")(validate_finite_json)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def parse_uuid(cls, value: object) -> object:
+        if isinstance(value, str):
+            return UUID(value)
+        return value
 
     @model_validator(mode="after")
     def task_must_not_be_whitespace(self) -> EntryCreateRequest:
@@ -34,6 +44,8 @@ class AttributePatch(DomainModel):
 
     set: dict[str, JsonValue] = Field(default_factory=dict)
     remove: list[str] = Field(default_factory=list)
+
+    _finite_values = field_validator("set", mode="before")(validate_finite_json)
 
     @model_validator(mode="after")
     def operations_must_be_unambiguous(self) -> AttributePatch:

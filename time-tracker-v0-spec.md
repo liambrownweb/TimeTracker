@@ -126,7 +126,7 @@ Acceptance: cover configuration locations, overrides and validation, default-fil
 All endpoints under `/v0`, JSON request/response bodies, conventional status codes, and machine-readable error codes.
 
 - `POST /v0/entries`: create from a client-supplied UUID; 201 and `Location: /v0/entries/{id}` on new creation; 200 for identical retried original submission; 409 for conflicting UUID/content; 422 for invalid content.
-- `GET /v0/entries`: list/filter current nondeleted entries (pagination and filter contract to be finalized).
+- `GET /v0/entries`: return all matching current nondeleted entries, sorted by current `started_at` or `created_at` when absent, then UUID. Optional `task` matches exactly; optional `attributes` is a JSON object in the query string whose values are matched exactly and type-strictly. Pagination is deferred.
 - `GET /v0/entries/{id}`: retrieve current entry; 404 if nonexistent.
 - `PATCH /v0/entries/{id}`: update only existing entry; 200 on successful meaningful modification; 404 if nonexistent; 409 for conflicting revision if optimistic concurrency is used; 422 on invalid patch.
 - `DELETE /v0/entries/{id}`: logical deletion of existing entry; 404 if nonexistent. Define response behavior for already-deleted entries consistently.
@@ -137,7 +137,7 @@ Error example:
 {"error":{"code":"ENTRY_NOT_FOUND","message":"No entry exists with the specified ID."}}
 ```
 
-Document deletion visibility: deleted entries are excluded from normal list/report responses, but preserved in operational state and journal. Whether direct GET of a deleted entry yields 404 or 410 is an explicit open choice; do not silently vary behavior.
+Deleted entries are excluded from normal list/report responses but preserved in operational state and journal. Direct GET and PATCH on a deleted entry return 410; repeat DELETE returns 204. An identical POST retry returns 200 with the current state, including if deleted.
 
 Acceptance: generate OpenAPI; verify methods/status codes, UUID retries, non-upsert PATCH, error shapes, and that HTTP schemas do not expose file paths.
 
