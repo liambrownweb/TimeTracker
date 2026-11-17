@@ -217,6 +217,8 @@ Build a compact native KDE Plasma widget (QML/Plasmoid, with platform-appropriat
 
 Acceptance: usable from the desktop panel or widget surface; no predefined tasks required; multiple drafts and single active timer; reliable queue behavior and API completion.
 
+The first implementation targets Plasma 5.27 and Qt 5 on Linux. Capture and delivery logic is separate from the Plasma-facing QML so that a later Plasma 6 port can replace the integration layer. The Linux client uses the boot-time monotonic clock while a boot remains identifiable and falls back to UTC wall time across reboots. A wall-clock change while the device is off can be undetectable. Automatic delivery runs while the widget is loaded, not as a background service.
+
 ## 10. Android client
 
 Build a native Android app and home-screen widget using Kotlin and Jetpack Glance or another documented native approach. Follow §08. Android widget constraints may require opening an activity for text entry or richer editing; document those UX choices rather than assuming unrestricted inline editing.

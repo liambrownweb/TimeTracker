@@ -6,3 +6,9 @@ __pycache__/
 server/.venv/
 
 /data/
+clients/plasma/build/
+/clients/plasma/CMakeFiles/
+/clients/plasma/CMakeCache.txt
+/clients/plasma/Makefile
+/clients/plasma/cmake_install.cmake
+/clients/plasma/CTestTestfile.cmake

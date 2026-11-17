@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Id": "org.timetracker.capture",
+        "Name": "Time Tracker",
+        "Description": "Capture and submit time entries",
+        "Authors": [{"Name": "Time Tracker contributors"}],
+        "Icon": "chronometer",
+        "Category": "Date and Time",
+        "Version": "0.1.0"
+    },
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-MainScript": "ui/main.qml"
+}
