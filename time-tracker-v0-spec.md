@@ -223,7 +223,14 @@ The first implementation targets Plasma 5.27 and Qt 5 on Linux. Capture and deli
 
 Build a native Android app and home-screen widget using Kotlin and Jetpack Glance or another documented native approach. Follow §08. Android widget constraints may require opening an activity for text entry or richer editing; document those UX choices rather than assuming unrestricted inline editing.
 
-Acceptance: quick start/pause/switch, capture/manual submission, persistent drafts, local pending queue, configurable server URL, completion fetched from API.
+Design for minimal interaction when the user is stressed or distracted:
+
+- A single tap on the widget opens task entry with the keyboard ready. If platform restrictions require an activity, make the transition as unobtrusive as practical and test it on a real device.
+- A Select button opens a modal task chooser with separate Recent and Frequent sections. Selecting a task and starting it are separate actions; provide a simple, prominent Start button.
+- Keep configuration, including the service URL, out of the main capture interface and behind a menu.
+- Support untethered use: persist local task completions and recent/frequent task information, combining tasks used on the phone with tasks previously learned from the server. Suggestions and the chooser must remain usable without connectivity or waiting for the server. Learn frequency locally; the current completion API does not provide rankings. An initial offline installation cannot have server-derived suggestions until it has connected. Offline capture, timers, drafts, and queuing follow §08.
+
+Acceptance: verify the tap-to-type and Select/Start flows on the home screen and a real Android device; confirm settings are hidden behind a menu. After learning tasks locally and from the service, disconnect, restart the app, and verify cached completions and Recent/Frequent choices remain available. Verify quick start/pause/switch, capture/manual submission, persistent drafts, local pending queue, configurable service URL, and completion fetched from the API.
 
 ## 11. Deployment, documentation, and integration
 
